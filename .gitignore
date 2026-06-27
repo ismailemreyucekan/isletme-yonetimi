@@ -1,0 +1,44 @@
+# ---- Python / Backend ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.sqlite3
+*.db
+.coverage
+htmlcov/
+
+# ---- Node / Frontend ----
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+*.local
+
+# ---- Env & secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Editor / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Docker ----
+*.pid
+
+# ---- Çalışma zamanı / araç ----
+backend/uploads/
+.claude/

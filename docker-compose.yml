@@ -1,0 +1,118 @@
+# Geliştirme ortamı: PostgreSQL + Redis + FastAPI API + Vite frontend.
+# Kullanım:  docker compose up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kasa
+      POSTGRES_PASSWORD: kasa
+      POSTGRES_DB: kasa
+    ports:
+      # Host portu yapılandırılabilir (varsayılan 5432). Makinende zaten yerel bir
+      # PostgreSQL 5432'yi kullanıyorsa, kök .env içinde DB_PORT=5433 ayarla.
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kasa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://kasa:kasa@db:5432/kasa
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: dev-secret-not-for-production-use-a-long-random-value
+      CORS_ORIGINS: http://localhost:5173
+      # Windows/Docker bind-mount'larda dosya değişikliklerinin algılanması için.
+      WATCHFILES_FORCE_POLLING: "true"
+    # Canlı geliştirme: kaynak bind-mount + uvicorn --reload.
+    # Kod değiştirince konteyner otomatik yeniden yükler (rebuild gerekmez).
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./backend:/app
+      - /app/.venv          # host'taki .venv'i konteynere taşıma
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_PROXY_TARGET: http://api:8000
+      # Bind-mount'ta HMR için dosya izlemeyi polling'e al (özellikle Windows).
+      VITE_USE_POLLING: "true"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # Müşteri QR menü & ödeme uygulaması (ayrı port/origin → prod'da ayrı domain).
+  # Ayni frontend kod tabanı, customer.html girişiyle çalışır.
+  customer:
+    build: ./frontend
+    command: ["npm", "run", "dev:customer", "--", "--host", "0.0.0.0"]
+    environment:
+      VITE_PROXY_TARGET: http://api:8000
+      VITE_USE_POLLING: "true"
+      # Kök (/) açılınca gidilecek demo işletme menüsü (boş bırakılırsa bilgi ekranı).
+      VITE_DEMO_SLUG: pa-aiskender
+    ports:
+      - "5174:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # Veritabanı yönetim arayüzü (opsiyonel). Sadece istendiğinde başlar:
+  #   docker compose --profile tools up -d pgadmin
+  # Tarayıcı: http://localhost:5050  (otomatik giriş; sunucu 'Kasa (Docker)' hazır)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    profiles: ["tools"]
+    environment:
+      # Not: .local/.test gibi rezerve domainler reddedilir; geçerli domain şart.
+      PGADMIN_DEFAULT_EMAIL: admin@kasa.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      # Masaüstü modu: giriş ekranı ve master parola sorma.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  pgadmin_data:
