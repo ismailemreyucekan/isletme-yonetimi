@@ -41,5 +41,12 @@ class Restaurant(UUIDMixin, TimestampMixin, Base):
         back_populates="restaurant", cascade="all, delete-orphan"
     )
 
+    @property
+    def features(self) -> dict[str, bool]:
+        """Plan + override'lar çözülmüş nihai özellik durumu (bkz. core.features)."""
+        from app.core.features import effective_features
+
+        return effective_features(self)
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Restaurant {self.slug!r}>"

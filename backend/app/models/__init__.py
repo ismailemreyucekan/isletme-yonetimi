@@ -24,9 +24,11 @@ from app.models.payment import (
     PaymentStatus,
     SplitType,
 )
+from app.models.platform_admin import PlatformAdmin
 from app.models.restaurant import Restaurant
 from app.models.table import Table
 from app.models.user import User, UserRole
+from app.models.waiter_call import WaiterCall, WaiterCallStatus
 
 __all__ = [
     "Base",
@@ -48,9 +50,12 @@ __all__ = [
     "Payment",
     "PaymentMethod",
     "PaymentStatus",
+    "PlatformAdmin",
     "Restaurant",
     "SplitType",
     "Table",
     "User",
     "UserRole",
+    "WaiterCall",
+    "WaiterCallStatus",
 ]

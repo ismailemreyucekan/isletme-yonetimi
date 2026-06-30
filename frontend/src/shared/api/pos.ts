@@ -1,5 +1,21 @@
 import { apiFetch } from "@shared/api/client";
-import type { Order, TableWithStatus } from "@shared/types";
+import type {
+  DashboardSummary,
+  Order,
+  TableWithStatus,
+  WaiterCall,
+} from "@shared/types";
+
+export const dashboardApi = {
+  summary: () => apiFetch<DashboardSummary>("/orders/summary"),
+};
+
+export const waiterCallsApi = {
+  list: () => apiFetch<WaiterCall[]>("/waiter-calls"),
+
+  resolve: (id: string) =>
+    apiFetch<WaiterCall>(`/waiter-calls/${id}/resolve`, { method: "POST" }),
+};
 
 export const tablesApi = {
   list: () => apiFetch<TableWithStatus[]>("/tables"),

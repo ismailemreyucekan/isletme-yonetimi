@@ -13,10 +13,12 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import DbSession
+from app.core.features import Feature, is_enabled
 from app.models.menu import MenuCategory, MenuItem
 from app.models.restaurant import Restaurant
 from app.models.table import Table
 from app.schemas.menu import MenuCategoryOut, MenuItemOut
+from app.schemas.modifier import ModifierGroupOut
 from app.schemas.order import OrderOut
 from app.schemas.public import (
     PublicMenuView,
@@ -28,12 +30,30 @@ from app.schemas.public import (
     PublicTableListItem,
     PublicTableView,
 )
-from app.services import order_service
+from app.schemas.waiter import CallWaiterRequest, CallWaiterResponse
+from app.services import modifier_service, order_service, waiter_service
 from app.services.order_service import OrderError
 
 router = APIRouter(prefix="/public", tags=["public"])
 
 _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Masa bulunamadı")
+
+
+def _require_qr_menu(restaurant: Restaurant) -> None:
+    """QR menü kapalı işletmede müşteri uçları yokmuş gibi davran (404).
+
+    403 yerine 404 dönmek "bu işletmenin QR'ı var ama kapalı" bilgisini sızdırmaz.
+    """
+    if not is_enabled(restaurant, Feature.QR_MENU):
+        raise _NOT_FOUND
+
+
+def _require_online_payment(restaurant: Restaurant) -> None:
+    if not is_enabled(restaurant, Feature.ONLINE_PAYMENT):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Online ödeme bu işletmede kapalı",
+        )
 
 
 async def _resolve_table(db: DbSession, qr_token: str) -> tuple[Table, Restaurant]:
@@ -44,6 +64,7 @@ async def _resolve_table(db: DbSession, qr_token: str) -> tuple[Table, Restauran
     restaurant = await db.get(Restaurant, table.restaurant_id)
     if restaurant is None:
         raise _NOT_FOUND
+    _require_qr_menu(restaurant)
     return table, restaurant
 
 
@@ -103,6 +124,7 @@ async def tables_by_slug(slug: str, db: DbSession) -> PublicTableList:
     restaurant = result.scalar_one_or_none()
     if restaurant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="İşletme bulunamadı")
+    _require_qr_menu(restaurant)
 
     rows = await db.execute(
         select(Table)
@@ -131,6 +153,7 @@ async def menu_by_slug(slug: str, db: DbSession) -> PublicMenuView:
     restaurant = result.scalar_one_or_none()
     if restaurant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="İşletme bulunamadı")
+    _require_qr_menu(restaurant)
     return await _menu_for(db, restaurant)
 
 
@@ -156,6 +179,19 @@ async def public_menu(qr_token: str, db: DbSession) -> PublicMenuView:
     )
 
 
+@router.get(
+    "/t/{qr_token}/menu-item/{item_id}/options",
+    response_model=list[ModifierGroupOut],
+)
+async def public_item_options(
+    qr_token: str, item_id: uuid.UUID, db: DbSession
+) -> list[ModifierGroupOut]:
+    """Bir ürünün seçilebilir opsiyon grupları (boy, ekstra vb.) — müşteri seçimi için."""
+    _, restaurant = await _resolve_table(db, qr_token)
+    groups = await modifier_service.get_item_groups(db, restaurant.id, item_id)
+    return [ModifierGroupOut.model_validate(g) for g in groups]
+
+
 @router.post("/t/{qr_token}/order", response_model=OrderOut)
 async def self_order(
     qr_token: str, data: PublicOrderRequest, db: DbSession
@@ -179,17 +215,32 @@ async def self_order(
                 continue
             try:
                 item_id = uuid.UUID(line.menu_item_id)
+                modifier_ids = [uuid.UUID(m) for m in line.modifier_ids]
             except (ValueError, TypeError) as exc:
                 raise HTTPException(status_code=400, detail="Geçersiz ürün") from exc
-            order = await order_service.add_item(db, order, item_id, line.quantity)
+            order = await order_service.add_item(
+                db, order, item_id, line.quantity, modifier_ids=modifier_ids
+            )
     except OrderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return OrderOut.model_validate(order)
 
 
-async def _active_order(db: DbSession, qr_token: str):
+@router.post("/t/{qr_token}/call-waiter", response_model=CallWaiterResponse)
+async def call_waiter(
+    qr_token: str, data: CallWaiterRequest, db: DbSession
+) -> CallWaiterResponse:
+    """Müşteri masadan garson çağırır. QR menü kapalıysa 404 (bkz. _resolve_table)."""
     table, restaurant = await _resolve_table(db, qr_token)
+    await waiter_service.call_waiter(db, restaurant.id, table.id, data.note)
+    return CallWaiterResponse()
+
+
+async def _active_order(db: DbSession, qr_token: str):
+    """Aktif hesabı döner ve online ödemenin açık olduğunu doğrular."""
+    table, restaurant = await _resolve_table(db, qr_token)
+    _require_online_payment(restaurant)
     order = await order_service.get_active_order_for_table(db, restaurant.id, table.id)
     if order is None:
         raise HTTPException(

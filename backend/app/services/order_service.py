@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -83,6 +83,77 @@ async def get_active_order_for_table(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def dashboard_summary(db: AsyncSession, restaurant_id: uuid.UUID) -> dict:
+    """İşletme ana sayfası özeti: masa doluluğu, aktif siparişler, bugünkü ciro.
+
+    Açık hesaplar (status=OPEN) tek sorguda çekilip toplanır; bugünün tahsilatı
+    Payment kayıtlarından (UTC gün başından itibaren) toplanır.
+    """
+    total_tables = (
+        await db.scalar(
+            select(func.count(Table.id)).where(Table.restaurant_id == restaurant_id)
+        )
+    ) or 0
+
+    open_orders = (
+        await db.execute(
+            select(Order)
+            .where(
+                Order.restaurant_id == restaurant_id,
+                Order.status == OrderStatus.OPEN,
+            )
+            .options(selectinload(Order.table))
+            .order_by(Order.opened_at)
+        )
+    ).scalars().all()
+
+    occupied_tables = len({o.table_id for o in open_orders if o.table_id is not None})
+    open_total = sum((Decimal(str(o.total)) for o in open_orders), Decimal("0"))
+    open_paid = sum((Decimal(str(o.paid_total)) for o in open_orders), Decimal("0"))
+
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    revenue, tips, payment_count = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Payment.amount), 0),
+                func.coalesce(func.sum(Payment.tip_amount), 0),
+                func.count(Payment.id),
+            ).where(
+                Payment.restaurant_id == restaurant_id,
+                Payment.created_at >= today_start,
+            )
+        )
+    ).one()
+
+    active_order_list = [
+        {
+            "order_id": o.id,
+            "table_id": o.table_id,
+            "table_name": o.table.name if o.table else None,
+            "source": o.source.value if hasattr(o.source, "value") else str(o.source),
+            "total": float(o.total),
+            "paid_total": float(o.paid_total),
+            "remaining": float(_money(Decimal(str(o.total)) - Decimal(str(o.paid_total)))),
+            "opened_at": o.opened_at,
+        }
+        for o in open_orders
+    ]
+
+    return {
+        "total_tables": total_tables,
+        "occupied_tables": occupied_tables,
+        "empty_tables": max(total_tables - occupied_tables, 0),
+        "active_orders": len(open_orders),
+        "open_total": float(_money(open_total)),
+        "open_paid": float(_money(open_paid)),
+        "open_remaining": float(_money(open_total - open_paid)),
+        "today_revenue": float(_money(Decimal(str(revenue)))),
+        "today_tips": float(_money(Decimal(str(tips)))),
+        "today_payments": int(payment_count),
+        "active_order_list": active_order_list,
+    }
 
 
 async def get_recent_paid_order_for_table(

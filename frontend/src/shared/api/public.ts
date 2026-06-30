@@ -1,4 +1,5 @@
 import { apiFetch } from "@shared/api/client";
+import type { ModifierGroup } from "@shared/api/modifiers";
 import type { MenuCategory, MenuItem, Order } from "@shared/types";
 
 export interface PublicRestaurant {
@@ -44,7 +45,15 @@ export const publicApi = {
   tablesBySlug: (slug: string) =>
     apiFetch<PublicTableList>(`/public/r/${slug}/tables`, { auth: false }),
 
-  placeOrder: (token: string, items: { menu_item_id: string; quantity: number }[]) =>
+  itemOptions: (token: string, itemId: string) =>
+    apiFetch<ModifierGroup[]>(`/public/t/${token}/menu-item/${itemId}/options`, {
+      auth: false,
+    }),
+
+  placeOrder: (
+    token: string,
+    items: { menu_item_id: string; quantity: number; modifier_ids?: string[] }[],
+  ) =>
     apiFetch<Order>(`/public/t/${token}/order`, {
       method: "POST",
       auth: false,
@@ -66,5 +75,12 @@ export const publicApi = {
       method: "POST",
       auth: false,
       body: { parts },
+    }),
+
+  callWaiter: (token: string, note?: string) =>
+    apiFetch<{ status: string; message: string }>(`/public/t/${token}/call-waiter`, {
+      method: "POST",
+      auth: false,
+      body: { note: note ?? null },
     }),
 };

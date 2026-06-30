@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.deps import CurrentRestaurant, DbSession, require_staff
 from app.models.user import User
 from app.schemas.coupon import ApplyCouponRequest
+from app.schemas.dashboard import DashboardSummary
 from app.schemas.order import (
     AddItemRequest,
     CloseOrderRequest,
@@ -31,6 +32,19 @@ RequireStaff = Annotated[User, Depends(require_staff)]
 
 def _bad(exc: OrderError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# NOT: "/summary" rotası "/{order_id}"den ÖNCE tanımlanmalı; aksi halde "summary"
+# bir order_id (UUID) sanılıp 422 döner.
+@router.get("/summary", response_model=DashboardSummary)
+async def dashboard_summary(
+    db: DbSession,
+    restaurant: CurrentRestaurant,
+    _: RequireStaff,
+) -> DashboardSummary:
+    """İşletme ana sayfası özeti: masa doluluğu, aktif siparişler, bugünkü ciro."""
+    data = await order_service.dashboard_summary(db, restaurant.id)
+    return DashboardSummary.model_validate(data)
 
 
 @router.post("/open", response_model=OrderOut, status_code=status.HTTP_201_CREATED)

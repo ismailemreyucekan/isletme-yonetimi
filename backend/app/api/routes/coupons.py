@@ -7,7 +7,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentRestaurant, DbSession, require_manager, require_staff
+from app.api.deps import (
+    DbSession,
+    require_feature,
+    require_manager,
+    require_staff,
+)
+from app.core.features import Feature
+from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.schemas.coupon import CouponCreate, CouponOut
 from app.services import coupon_service
@@ -17,11 +24,12 @@ router = APIRouter(prefix="/coupons", tags=["coupons"])
 
 RequireStaff = Annotated[User, Depends(require_staff)]
 RequireManager = Annotated[User, Depends(require_manager)]
+RequireCoupons = Annotated[Restaurant, Depends(require_feature(Feature.COUPONS))]
 
 
 @router.get("", response_model=list[CouponOut])
 async def list_coupons(
-    db: DbSession, restaurant: CurrentRestaurant, _: RequireStaff
+    db: DbSession, restaurant: RequireCoupons, _: RequireStaff
 ) -> list[CouponOut]:
     coupons = await coupon_service.list_coupons(db, restaurant.id)
     return [CouponOut.model_validate(c) for c in coupons]
@@ -29,7 +37,7 @@ async def list_coupons(
 
 @router.post("", response_model=CouponOut, status_code=status.HTTP_201_CREATED)
 async def create_coupon(
-    data: CouponCreate, db: DbSession, restaurant: CurrentRestaurant, _: RequireManager
+    data: CouponCreate, db: DbSession, restaurant: RequireCoupons, _: RequireManager
 ) -> CouponOut:
     try:
         coupon = await coupon_service.create_coupon(
@@ -46,7 +54,7 @@ async def create_coupon(
 async def delete_coupon(
     coupon_id: uuid.UUID,
     db: DbSession,
-    restaurant: CurrentRestaurant,
+    restaurant: RequireCoupons,
     _: RequireManager,
 ) -> None:
     try:

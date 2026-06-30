@@ -35,6 +35,9 @@ export function KdsPage() {
   const navigate = useNavigate();
   const logout = useAuthStore((s) => s.logout);
   const [, setTick] = useState(0);
+  const [waiterAlerts, setWaiterAlerts] = useState<
+    { id: string; table: string; at: number }[]
+  >([]);
 
   const { data: tickets = [], isLoading } = useQuery({
     queryKey: ["kds-tickets"],
@@ -42,13 +45,29 @@ export function KdsPage() {
     refetchInterval: 5000,
   });
 
-  // Canlı güncelleme: WebSocket olayında listeyi tazele.
+  // Canlı güncelleme: WebSocket olayında listeyi tazele; garson çağrısında uyarı göster.
   useEffect(() => {
-    const disconnect = connectKdsSocket(() => {
+    const disconnect = connectKdsSocket((event) => {
+      if (event.type === "waiter.called") {
+        setWaiterAlerts((a) =>
+          [
+            {
+              id: event.call_id ?? `${Date.now()}`,
+              table: event.table_name ?? "Masa",
+              at: Date.now(),
+            },
+            ...a.filter((x) => x.id !== event.call_id),
+          ].slice(0, 20),
+        );
+        return;
+      }
       qc.invalidateQueries({ queryKey: ["kds-tickets"] });
     });
     return disconnect;
   }, [qc]);
+
+  const dismissAlert = (id: string) =>
+    setWaiterAlerts((a) => a.filter((x) => x.id !== id));
 
   // Süre sayaçları için periyodik render.
   useEffect(() => {
@@ -105,6 +124,26 @@ export function KdsPage() {
           </button>
         </div>
       </header>
+
+      {waiterAlerts.length > 0 && (
+        <div className="flex flex-col gap-1.5 border-b border-amber-500/40 bg-amber-500/15 px-3 py-2">
+          {waiterAlerts.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => dismissAlert(a.id)}
+              className="flex items-center justify-between gap-3 rounded-lg bg-amber-500/20 px-4 py-2 text-left transition-colors hover:bg-amber-500/30"
+            >
+              <span className="flex items-center gap-2 font-semibold text-amber-100">
+                <span className="text-xl">🔔</span>
+                {a.table} garson çağırıyor
+              </span>
+              <span className="text-xs font-medium text-amber-200/80">
+                dokun → kapat
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center text-slate-500">Yükleniyor…</div>

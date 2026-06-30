@@ -50,6 +50,7 @@ class PublicSplitRequest(BaseModel):
 class PublicOrderLine(BaseModel):
     menu_item_id: str
     quantity: int = 1
+    modifier_ids: list[str] = []
 
 
 class PublicOrderRequest(BaseModel):

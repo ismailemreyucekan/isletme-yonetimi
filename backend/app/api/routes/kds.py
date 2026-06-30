@@ -8,9 +8,15 @@ from typing import Annotated
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
-from app.api.deps import CurrentRestaurant, DbSession, require_staff
+from app.api.deps import (
+    DbSession,
+    require_feature,
+    require_staff,
+)
 from app.core.db import get_db
+from app.core.features import Feature
 from app.core.security import decode_token
+from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.realtime import hub
 from app.schemas.kds import KdsItem, KdsTicket, SetKitchenStatusRequest
@@ -20,11 +26,12 @@ from app.services.kds_service import KdsError
 router = APIRouter(prefix="/kds", tags=["kds"])
 
 RequireStaff = Annotated[User, Depends(require_staff)]
+RequireKds = Annotated[Restaurant, Depends(require_feature(Feature.KDS))]
 
 
 @router.get("/tickets", response_model=list[KdsTicket])
 async def list_tickets(
-    db: DbSession, restaurant: CurrentRestaurant, _: RequireStaff
+    db: DbSession, restaurant: RequireKds, _: RequireStaff
 ) -> list[KdsTicket]:
     orders = await kds_service.list_tickets(db, restaurant.id)
     tickets: list[KdsTicket] = []
@@ -52,7 +59,7 @@ async def set_item_status(
     item_id: uuid.UUID,
     data: SetKitchenStatusRequest,
     db: DbSession,
-    restaurant: CurrentRestaurant,
+    restaurant: RequireKds,
     _: RequireStaff,
 ) -> KdsItem:
     try:

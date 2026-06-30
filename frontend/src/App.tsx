@@ -1,5 +1,8 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { AdminDashboardPage } from "@/apps/admin/AdminDashboardPage";
+import { AdminLoginPage } from "@/apps/admin/AdminLoginPage";
+import { AdminProtectedRoute } from "@/apps/admin/AdminProtectedRoute";
 import { CustomerPage } from "@/apps/customer/CustomerPage";
 import { KdsPage } from "@/apps/kds/KdsPage";
 import { CouponsPage } from "@/apps/staff/CouponsPage";
@@ -49,6 +52,17 @@ export default function App() {
           <ProtectedRoute>
             <KdsPage />
           </ProtectedRoute>
+        }
+      />
+
+      {/* Platform admin paneli (SaaS yöneticisi) */}
+      <Route path="/admin/login" element={<AdminLoginPage />} />
+      <Route
+        path="/admin"
+        element={
+          <AdminProtectedRoute>
+            <AdminDashboardPage />
+          </AdminProtectedRoute>
         }
       />
 

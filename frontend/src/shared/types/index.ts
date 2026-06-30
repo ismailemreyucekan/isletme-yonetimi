@@ -16,6 +16,45 @@ export interface Restaurant {
   slug: string;
   plan: string;
   settings: Record<string, unknown>;
+  features: Record<string, boolean>;
+  created_at: string;
+}
+
+// ── Platform admin paneli ────────────────────────────────────────────────────
+
+export interface PlatformAdmin {
+  id: string;
+  name: string;
+  email: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdminTokenPair {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+export interface AdminAuthResponse extends AdminTokenPair {
+  admin: PlatformAdmin;
+}
+
+export interface FeatureCatalogItem {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export interface AdminRestaurant {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  settings: Record<string, unknown>;
+  features: Record<string, boolean>;
+  user_count: number;
+  owner_email: string | null;
   created_at: string;
 }
 
@@ -131,6 +170,43 @@ export interface KdsTicket {
 }
 
 export type OrderStatus = "open" | "paid" | "closed";
+
+export interface WaiterCall {
+  id: string;
+  table_id: string;
+  table_name: string | null;
+  status: "pending" | "resolved";
+  note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+// ── İşletme ana sayfası özeti ────────────────────────────────────────────────
+
+export interface ActiveOrderSummary {
+  order_id: string;
+  table_id: string | null;
+  table_name: string | null;
+  source: string;
+  total: number;
+  paid_total: number;
+  remaining: number;
+  opened_at: string;
+}
+
+export interface DashboardSummary {
+  total_tables: number;
+  occupied_tables: number;
+  empty_tables: number;
+  active_orders: number;
+  open_total: number;
+  open_paid: number;
+  open_remaining: number;
+  today_revenue: number;
+  today_tips: number;
+  today_payments: number;
+  active_order_list: ActiveOrderSummary[];
+}
 
 export interface Order {
   id: string;

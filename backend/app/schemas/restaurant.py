@@ -17,4 +17,5 @@ class RestaurantOut(BaseModel):
     slug: str
     plan: str
     settings: dict[str, Any] = Field(default_factory=dict)
+    features: dict[str, bool] = Field(default_factory=dict)
     created_at: datetime

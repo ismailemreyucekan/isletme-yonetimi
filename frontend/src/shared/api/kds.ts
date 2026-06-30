@@ -12,9 +12,17 @@ export const kdsApi = {
     }),
 };
 
+export interface RealtimeEvent {
+  type: string;
+  order_id?: string;
+  call_id?: string;
+  table_id?: string;
+  table_name?: string | null;
+}
+
 /** KDS canlı kanalına WebSocket bağlantısı açar. onEvent her olayda çağrılır. */
 export function connectKdsSocket(
-  onEvent: (event: { type: string; order_id?: string }) => void,
+  onEvent: (event: RealtimeEvent) => void,
   topic: "kds" | "pos" = "kds",
 ): () => void {
   const token = useAuthStore.getState().accessToken;

@@ -1,7 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { authApi } from "@shared/api/auth";
+import { connectKdsSocket } from "@shared/api/kds";
+import { waiterCallsApi } from "@shared/api/pos";
 import { useAuthStore } from "@shared/store/authStore";
 
 const NAV = [
@@ -60,6 +63,78 @@ export function StaffLayout() {
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>
+
+      {/* Garson çağrısı: hangi personel sayfasında olursak olalım anında düşer */}
+      <WaiterCallNotifier />
+    </div>
+  );
+}
+
+// Canlı garson çağrısı bildirimi — "pos" kanalını dinler, ekranın sağ üstüne
+// açılır kart(lar) düşürür. Kartdan "Geldim" ile çağrı kapatılır.
+function WaiterCallNotifier() {
+  const qc = useQueryClient();
+  const [alerts, setAlerts] = useState<{ id: string; table: string }[]>([]);
+
+  const resolve = useMutation({
+    mutationFn: (id: string) => waiterCallsApi.resolve(id),
+    onSuccess: (_data, id) => {
+      setAlerts((a) => a.filter((x) => x.id !== id));
+      qc.invalidateQueries({ queryKey: ["waiter-calls"] });
+    },
+  });
+
+  useEffect(() => {
+    const disconnect = connectKdsSocket((event) => {
+      if (event.type !== "waiter.called") return;
+      const id = event.call_id ?? `${Date.now()}`;
+      setAlerts((a) =>
+        [{ id, table: event.table_name ?? "Masa" }, ...a.filter((x) => x.id !== id)].slice(0, 10),
+      );
+      // Açık olan listeler (Dashboard bölümü) de anında tazelensin.
+      qc.invalidateQueries({ queryKey: ["waiter-calls"] });
+    }, "pos");
+    return disconnect;
+  }, [qc]);
+
+  const dismiss = (id: string) => setAlerts((a) => a.filter((x) => x.id !== id));
+
+  if (alerts.length === 0) return null;
+
+  return (
+    <div className="fixed right-4 top-20 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+      {alerts.map((a) => (
+        <div
+          key={a.id}
+          className="flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-xl"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-2xl">🔔</span>
+            <div className="min-w-0">
+              <p className="truncate font-bold text-amber-900">{a.table}</p>
+              <p className="text-xs text-amber-700">garson çağırıyor</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              disabled={resolve.isPending}
+              onClick={() => resolve.mutate(a.id)}
+              className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+            >
+              Geldim
+            </button>
+            <button
+              type="button"
+              onClick={() => dismiss(a.id)}
+              aria-label="Kapat"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-lg text-amber-700 hover:bg-amber-100"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

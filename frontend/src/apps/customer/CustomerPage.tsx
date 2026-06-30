@@ -3,8 +3,9 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "@shared/api/client";
+import type { ModifierGroup } from "@shared/api/modifiers";
 import { publicApi } from "@shared/api/public";
-import type { Order } from "@shared/types";
+import type { MenuItem, Order } from "@shared/types";
 
 function money(v: number | string) {
   return `₺${Number(v).toFixed(0)}`;
@@ -41,6 +42,39 @@ function NotFound() {
   );
 }
 
+// Garson çağırma butonu — masadan personeli çağırır, onay toast'ı gösterir.
+function CallWaiterButton({ token }: { token: string }) {
+  const [toast, setToast] = useState(false);
+  const call = useMutation({
+    mutationFn: () => publicApi.callWaiter(token),
+    onSuccess: () => {
+      setToast(true);
+      window.setTimeout(() => setToast(false), 3000);
+    },
+  });
+  return (
+    <>
+      <button
+        onClick={() => call.mutate()}
+        disabled={call.isPending}
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-olive-600/30 bg-white text-olive-700 transition-colors hover:bg-olive-50 active:scale-95 disabled:opacity-60"
+        aria-label="Garson çağır"
+        title="Garson çağır"
+      >
+        <Icon name="room_service" className="text-[22px]" />
+      </button>
+      {toast && (
+        <div className="fixed inset-x-0 top-20 z-[60] mx-auto flex max-w-md justify-center px-5">
+          <div className="flex items-center gap-2 rounded-full bg-olive-700 px-5 py-2.5 text-sm font-semibold text-white shadow-lg">
+            <Icon name="room_service" className="text-[20px]" />
+            Garson çağrıldı, birazdan masanıza gelecek
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Sayfa 1: Masa menüsü + sipariş (QR doğrudan buraya girer) ─────────────────
 
 export function CustomerPage() {
@@ -65,18 +99,21 @@ export function CustomerPage() {
             </h1>
             <p className="text-xs font-medium text-ink-soft">{data.table_name}</p>
           </div>
-          <button
-            onClick={() => navigate(`/r/${slug}/t/${token}/odeme`)}
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-olive-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-olive-700 active:scale-95"
-          >
-            <Icon name="receipt_long" className="text-[20px]" />
-            <span>Ödeme</span>
-            {remaining > 0 && (
-              <span className="rounded bg-white/90 px-1.5 py-0.5 text-xs font-bold text-olive-700">
-                {money(remaining)}
-              </span>
-            )}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <CallWaiterButton token={token!} />
+            <button
+              onClick={() => navigate(`/r/${slug}/t/${token}/odeme`)}
+              className="flex items-center gap-2 rounded-lg bg-olive-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-olive-700 active:scale-95"
+            >
+              <Icon name="receipt_long" className="text-[20px]" />
+              <span>Ödeme</span>
+              {remaining > 0 && (
+                <span className="rounded bg-white/90 px-1.5 py-0.5 text-xs font-bold text-olive-700">
+                  {money(remaining)}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -124,6 +161,18 @@ export function CustomerPaymentPage() {
 
 // ── Menü + sipariş ───────────────────────────────────────────────────────────
 
+interface CartLine {
+  uid: string;
+  key: string; // itemId + sıralı modifier id'leri — aynı seçim birleşsin
+  itemId: string;
+  name: string;
+  basePrice: number;
+  modifierIds: string[];
+  modifierLabels: string[];
+  extra: number;
+  quantity: number;
+}
+
 function MenuOrder({ token }: { token: string }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -131,19 +180,28 @@ function MenuOrder({ token }: { token: string }) {
     queryFn: () => publicApi.menu(token),
   });
 
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const [cart, setCart] = useState<CartLine[]>([]);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [toast, setToast] = useState(false);
+  const [optionItem, setOptionItem] = useState<{
+    item: MenuItem;
+    groups: ModifierGroup[];
+  } | null>(null);
+  const [loadingItem, setLoadingItem] = useState<string | null>(null);
 
   const place = useMutation({
     mutationFn: () =>
       publicApi.placeOrder(
         token,
-        Object.entries(cart).map(([menu_item_id, quantity]) => ({ menu_item_id, quantity })),
+        cart.map((l) => ({
+          menu_item_id: l.itemId,
+          quantity: l.quantity,
+          modifier_ids: l.modifierIds,
+        })),
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["public-table", token] });
-      setCart({});
+      setCart([]);
       setToast(true);
       window.setTimeout(() => setToast(false), 2500);
     },
@@ -155,19 +213,68 @@ function MenuOrder({ token }: { token: string }) {
   if (isLoading) return <div className="pt-24 text-center text-ink-soft">Yükleniyor…</div>;
   if (!data) return null;
 
-  const add = (id: string) => setCart((c) => ({ ...c, [id]: (c[id] ?? 0) + 1 }));
-  const sub = (id: string) =>
+  const addLine = (
+    item: MenuItem,
+    modifierIds: string[],
+    labels: string[],
+    extra: number,
+  ) => {
+    const key = `${item.id}|${[...modifierIds].sort().join(",")}`;
     setCart((c) => {
-      const n = (c[id] ?? 0) - 1;
-      const next = { ...c };
-      if (n <= 0) delete next[id];
-      else next[id] = n;
-      return next;
+      const idx = c.findIndex((l) => l.key === key);
+      if (idx >= 0) {
+        const next = [...c];
+        next[idx] = { ...next[idx], quantity: next[idx].quantity + 1 };
+        return next;
+      }
+      const uid =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`;
+      return [
+        ...c,
+        {
+          uid,
+          key,
+          itemId: item.id,
+          name: item.name,
+          basePrice: Number(item.price),
+          modifierIds,
+          modifierLabels: labels,
+          extra,
+          quantity: 1,
+        },
+      ];
     });
+  };
 
-  const priceOf = (id: string) => Number(data.items.find((i) => i.id === id)?.price ?? 0);
-  const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
-  const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + priceOf(id) * q, 0);
+  // Ürün eklenirken opsiyonları getir: varsa seçim modalı, yoksa direkt ekle.
+  const onAdd = async (item: MenuItem) => {
+    setLoadingItem(item.id);
+    try {
+      const groups = await publicApi.itemOptions(token, item.id);
+      if (groups.length === 0) addLine(item, [], [], 0);
+      else setOptionItem({ item, groups });
+    } catch {
+      addLine(item, [], [], 0);
+    } finally {
+      setLoadingItem(null);
+    }
+  };
+
+  const incLine = (uid: string) =>
+    setCart((c) => c.map((l) => (l.uid === uid ? { ...l, quantity: l.quantity + 1 } : l)));
+  const decLine = (uid: string) =>
+    setCart((c) =>
+      c.flatMap((l) =>
+        l.uid === uid ? (l.quantity <= 1 ? [] : [{ ...l, quantity: l.quantity - 1 }]) : [l],
+      ),
+    );
+
+  const countForItem = (id: string) =>
+    cart.filter((l) => l.itemId === id).reduce((s, l) => s + l.quantity, 0);
+  const cartCount = cart.reduce((s, l) => s + l.quantity, 0);
+  const cartTotal = cart.reduce((s, l) => s + (l.basePrice + l.extra) * l.quantity, 0);
 
   const cats = data.categories.filter((c) => data.items.some((i) => i.category_id === c.id));
   const shownCat = activeCat ?? cats[0]?.id ?? null;
@@ -203,7 +310,7 @@ function MenuOrder({ token }: { token: string }) {
 
         <section className="space-y-10">
           {visibleItems.map((it) => {
-            const qty = cart[it.id] ?? 0;
+            const qty = countForItem(it.id);
             return (
               <article key={it.id} className="flex flex-col gap-5">
                 {it.image_url ? (
@@ -239,33 +346,19 @@ function MenuOrder({ token }: { token: string }) {
                     )}
                   </div>
 
-                  {qty === 0 ? (
-                    <button
-                      onClick={() => add(it.id)}
-                      className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-olive-600 text-white shadow-lg shadow-olive-600/20 transition-all hover:bg-olive-700 active:scale-90"
-                      aria-label="Ekle"
-                    >
-                      <Icon name="add" className="text-[28px]" />
-                    </button>
-                  ) : (
-                    <div className="flex shrink-0 items-center gap-2 rounded-2xl bg-olive-50 p-1">
-                      <button
-                        onClick={() => sub(it.id)}
-                        className="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-olive-700 shadow-sm active:scale-90"
-                        aria-label="Azalt"
-                      >
-                        <Icon name="remove" className="text-[24px]" />
-                      </button>
-                      <span className="w-6 text-center text-lg font-bold text-olive-700">{qty}</span>
-                      <button
-                        onClick={() => add(it.id)}
-                        className="flex h-12 w-12 items-center justify-center rounded-xl bg-olive-600 text-white shadow-sm active:scale-90"
-                        aria-label="Arttır"
-                      >
-                        <Icon name="add" className="text-[24px]" />
-                      </button>
-                    </div>
-                  )}
+                  <button
+                    onClick={() => onAdd(it)}
+                    disabled={loadingItem === it.id}
+                    className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-olive-600 text-white shadow-lg shadow-olive-600/20 transition-all hover:bg-olive-700 active:scale-90 disabled:opacity-60"
+                    aria-label="Ekle"
+                  >
+                    <Icon name="add" className="text-[28px]" />
+                    {qty > 0 && (
+                      <span className="absolute -right-1.5 -top-1.5 flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-1 text-xs font-bold text-olive-700 shadow">
+                        {qty}
+                      </span>
+                    )}
+                  </button>
                 </div>
                 <div className="border-b border-hairline/30" />
               </article>
@@ -284,6 +377,19 @@ function MenuOrder({ token }: { token: string }) {
         </div>
       )}
 
+      {/* Opsiyon seçim modalı (boy, ekstra vb.) */}
+      {optionItem && (
+        <OptionSheet
+          item={optionItem.item}
+          groups={optionItem.groups}
+          onClose={() => setOptionItem(null)}
+          onConfirm={(ids, labels, extra) => {
+            addLine(optionItem.item, ids, labels, extra);
+            setOptionItem(null);
+          }}
+        />
+      )}
+
       {/* Sepet çubuğu (alt) */}
       {cartCount > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-md border-t border-hairline/30 bg-white/95 px-5 pb-7 pt-4 backdrop-blur-xl">
@@ -292,6 +398,38 @@ function MenuOrder({ token }: { token: string }) {
               {errorMsg}
             </div>
           )}
+          <ul className="mb-3 max-h-44 space-y-2 overflow-auto">
+            {cart.map((l) => (
+              <li key={l.uid} className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-serif text-ink">{l.name}</p>
+                  {l.modifierLabels.length > 0 && (
+                    <p className="truncate text-xs text-ink-soft/80">
+                      {l.modifierLabels.join(", ")}
+                    </p>
+                  )}
+                  <p className="text-xs text-ink-soft">{money(l.basePrice + l.extra)}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 rounded-xl bg-olive-50 p-1">
+                  <button
+                    onClick={() => decLine(l.uid)}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-olive-700 shadow-sm active:scale-90"
+                    aria-label="Azalt"
+                  >
+                    <Icon name="remove" className="text-[20px]" />
+                  </button>
+                  <span className="w-5 text-center font-bold text-olive-700">{l.quantity}</span>
+                  <button
+                    onClick={() => incLine(l.uid)}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-olive-600 text-white shadow-sm active:scale-90"
+                    aria-label="Arttır"
+                  >
+                    <Icon name="add" className="text-[20px]" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
           <button
             onClick={() => place.mutate()}
             disabled={place.isPending}
@@ -308,6 +446,119 @@ function MenuOrder({ token }: { token: string }) {
         </div>
       )}
     </>
+  );
+}
+
+// ── Opsiyon seçim modalı (müşteri) ───────────────────────────────────────────
+
+function OptionSheet({
+  item,
+  groups,
+  onClose,
+  onConfirm,
+}: {
+  item: MenuItem;
+  groups: ModifierGroup[];
+  onClose: () => void;
+  onConfirm: (modifierIds: string[], labels: string[], extra: number) => void;
+}) {
+  const [selected, setSelected] = useState<Record<string, Set<string>>>({});
+  const getSel = (gid: string) => selected[gid] ?? new Set<string>();
+  const setSel = (gid: string, next: Set<string>) =>
+    setSelected((s) => ({ ...s, [gid]: next }));
+
+  const pickSingle = (gid: string, mid: string) => setSel(gid, new Set([mid]));
+  const toggleMulti = (g: ModifierGroup, mid: string) => {
+    const cur = new Set(getSel(g.id));
+    if (cur.has(mid)) cur.delete(mid);
+    else if (cur.size < g.max_select) cur.add(mid);
+    setSel(g.id, cur);
+  };
+
+  const valid = groups.every((g) => {
+    const n = getSel(g.id).size;
+    if (g.is_required && n < Math.max(g.min_select, 1)) return false;
+    return n >= g.min_select;
+  });
+
+  const chosen = groups.flatMap((g) =>
+    g.modifiers.filter((m) => getSel(g.id).has(m.id)),
+  );
+  const ids = chosen.map((m) => m.id);
+  const labels = chosen.map((m) => m.name);
+  const extra = chosen.reduce((s, m) => s + Number(m.price_delta), 0);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40">
+      <div className="mx-auto flex max-h-[90vh] w-full max-w-md flex-col rounded-t-3xl bg-cream">
+        <div className="flex items-center justify-between border-b border-hairline/30 px-5 py-4">
+          <h3 className="truncate font-serif text-xl font-semibold text-ink">{item.name}</h3>
+          <button onClick={onClose} className="text-ink-soft" aria-label="Kapat">
+            <Icon name="close" className="text-[24px]" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-auto px-5 py-4">
+          {groups.map((g) => (
+            <div key={g.id}>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-serif text-lg text-ink">{g.name}</span>
+                <span className="text-xs text-ink-soft">
+                  {g.is_required ? "zorunlu" : "opsiyonel"}
+                  {g.selection_type === "multiple" && ` · en fazla ${g.max_select}`}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {g.modifiers
+                  .filter((m) => m.is_available)
+                  .map((m) => {
+                    const checked = getSel(g.id).has(m.id);
+                    return (
+                      <label
+                        key={m.id}
+                        className={[
+                          "flex cursor-pointer items-center gap-3 rounded-xl border p-3",
+                          checked
+                            ? "border-olive-500 bg-olive-50"
+                            : "border-hairline/40 bg-white",
+                        ].join(" ")}
+                      >
+                        <input
+                          type={g.selection_type === "single" ? "radio" : "checkbox"}
+                          name={g.id}
+                          checked={checked}
+                          onChange={() =>
+                            g.selection_type === "single"
+                              ? pickSingle(g.id, m.id)
+                              : toggleMulti(g, m.id)
+                          }
+                          className="h-5 w-5 accent-olive-600"
+                        />
+                        <span className="flex-1 font-serif text-ink">{m.name}</span>
+                        {Number(m.price_delta) !== 0 && (
+                          <span className="font-jakarta text-sm font-semibold text-olive-700">
+                            +{money(m.price_delta)}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="border-t border-hairline/30 p-4">
+          <button
+            onClick={() => onConfirm(ids, labels, extra)}
+            disabled={!valid}
+            className="h-14 w-full rounded-lg bg-olive-600 font-semibold text-white transition-colors hover:bg-olive-700 disabled:opacity-50"
+          >
+            Sepete Ekle ({money(Number(item.price) + extra)})
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
