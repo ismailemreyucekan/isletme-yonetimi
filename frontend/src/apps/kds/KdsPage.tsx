@@ -78,7 +78,25 @@ export function KdsPage() {
   const advance = useMutation({
     mutationFn: ({ id, next }: { id: string; next: KitchenStatus }) =>
       kdsApi.setItemStatus(id, next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["kds-tickets"] }),
+    // Anlık (optimistic) güncelleme: uzak DB'nin (Neon) yanıtını beklemeden
+    // kartı hemen taşı; sunucu cevabı gelince arka planda tazele, hata olursa geri al.
+    onMutate: async ({ id, next }) => {
+      await qc.cancelQueries({ queryKey: ["kds-tickets"] });
+      const prev = qc.getQueryData<KdsTicket[]>(["kds-tickets"]);
+      qc.setQueryData<KdsTicket[]>(["kds-tickets"], (old) =>
+        (old ?? []).map((t) => ({
+          ...t,
+          items: t.items.map((it) =>
+            it.id === id ? { ...it, kitchen_status: next } : it,
+          ),
+        })),
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["kds-tickets"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["kds-tickets"] }),
   });
 
   const board: BoardItem[] = tickets.flatMap((t: KdsTicket) =>

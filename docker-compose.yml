@@ -37,7 +37,9 @@ services:
     environment:
       ENVIRONMENT: development
       DEBUG: "true"
-      DATABASE_URL: postgresql+asyncpg://kasa:kasa@db:5432/kasa
+      # Ortak veritabanı: kök .env'de DATABASE_URL tanımlıysa onu kullanır
+      # (ekipçe aynı buluta bağlanmak için), yoksa yerel db konteynerine düşer.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://kasa:kasa@db:5432/kasa}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: dev-secret-not-for-production-use-a-long-random-value
       CORS_ORIGINS: http://localhost:5173

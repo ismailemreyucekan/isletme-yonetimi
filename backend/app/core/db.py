@@ -12,12 +12,19 @@ def _connect_args(url: str) -> dict:
     """Uzak Postgres (Neon/Supabase vb.) SSL ister; yerel/Docker DB istemez."""
     host = (urlsplit(url).hostname or "").lower()
     is_local = host in ("localhost", "127.0.0.1", "db", "")
-    return {} if is_local else {"ssl": True}
+    if is_local:
+        return {}
+    # Uzak DB (Neon) — SSL şart. Neon'un pooler'ı (PgBouncer, transaction mode)
+    # hazır sorgu (prepared statement) önbelleğini desteklemez; asyncpg'de bunu
+    # kapatmazsak "prepared statement" hataları / bağlantı sorunları çıkar.
+    return {"ssl": True, "statement_cache_size": 0}
 
 
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
+    # SQL echo kapalı: uzak DB'de (Neon) her sorguyu log'a basmak gereksiz yük
+    # ve gürültü yaratıyordu. (Önceden echo=settings.debug idi.)
+    echo=False,
     pool_pre_ping=True,
     future=True,
     connect_args=_connect_args(settings.database_url),

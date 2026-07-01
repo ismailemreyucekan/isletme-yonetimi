@@ -61,7 +61,8 @@ async def set_item_status(
 
     item.kitchen_status = status
     await db.commit()
-    await db.refresh(item)
+    # db.refresh() gereksiz: expire_on_commit=False olduğundan alanlar zaten
+    # bellekte; uzak DB'ye (Neon) fazladan bir gidiş-dönüş yapmıyoruz.
 
     await publish_kitchen_event(
         restaurant_id,
